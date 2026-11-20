@@ -1,0 +1,170 @@
+trigger:
+  branches:
+    include:
+      - main
+
+pr:
+  branches:
+    include:
+      - main
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  - group: kk-kubernetes-terraform
+  - name: TF_VERSION
+    value: '1.7.5'
+  - name: TF_WORKING_DIR
+    value: '$(Build.SourcesDirectory)'
+  - name: TF_STATE_KEY
+    value: 'kk-kubernetes.tfstate'
+
+stages:
+  # ==========================================
+  # STAGE 1: TERRAFORM VALIDATION
+  # ==========================================
+  - stage: Validate
+    displayName: Terraform Validate
+    jobs:
+      - job: TerraformValidate
+        displayName: Format and Validate
+        steps:
+          - checkout: self
+
+          - task: TerraformInstaller@1
+            displayName: Install Terraform
+            inputs:
+              terraformVersion: $(TF_VERSION)
+
+          - script: |
+              set -e
+              cd "$(TF_WORKING_DIR)"
+              terraform version
+              terraform fmt -check -recursive
+              terraform init -backend=false
+              terraform validate
+            displayName: Terraform Format and Validate
+
+  # ==========================================
+  # STAGE 2: TERRAFORM PLAN
+  # ==========================================
+  - stage: Plan
+    displayName: Terraform Plan
+    dependsOn: Validate
+    condition: succeeded()
+    jobs:
+      - job: TerraformPlan
+        displayName: Generate Terraform Plan
+        steps:
+          - checkout: self
+
+          - task: TerraformInstaller@1
+            displayName: Install Terraform
+            inputs:
+              terraformVersion: $(TF_VERSION)
+
+          - task: AzureCLI@2
+            displayName: Terraform Init and Plan
+            inputs:
+              azureSubscription: $(AZURE_SERVICE_CONNECTION)
+              scriptType: bash
+              scriptLocation: inlineScript
+              addSpnToEnvironment: true
+              inlineScript: |
+                set -euo pipefail
+                cd "$(TF_WORKING_DIR)"
+
+                export ARM_USE_OIDC=true
+                export ARM_CLIENT_ID="$servicePrincipalId"
+                export ARM_OIDC_TOKEN="$idToken"
+                export ARM_TENANT_ID="$tenantId"
+                export ARM_SUBSCRIPTION_ID="$(AZURE_SUBSCRIPTION_ID)"
+                export TF_VAR_subscription_id="$(AZURE_SUBSCRIPTION_ID)"
+
+                terraform init \
+                  -input=false \
+                  -reconfigure \
+                  -backend-config="resource_group_name=$(TFSTATE_RESOURCE_GROUP)" \
+                  -backend-config="storage_account_name=$(TFSTATE_STORAGE_ACCOUNT)" \
+                  -backend-config="container_name=$(TFSTATE_CONTAINER)" \
+                  -backend-config="key=$(TF_STATE_KEY)" \
+                  -backend-config="use_oidc=true" \
+                  -backend-config="use_azuread_auth=true"
+
+                terraform plan \
+                  -input=false \
+                  -out=tfplan
+            env:
+              TF_VAR_ssh_public_key: $(TF_VAR_ssh_public_key)
+
+          - task: PublishPipelineArtifact@1
+            displayName: Publish Terraform Plan
+            inputs:
+              targetPath: '$(TF_WORKING_DIR)/tfplan'
+              artifact: terraform-plan
+              publishLocation: pipeline
+
+  # ==========================================
+  # STAGE 3: TERRAFORM APPLY
+  # ==========================================
+  - stage: Apply
+    displayName: Deploy Azure Kubernetes Infrastructure
+    dependsOn: Plan
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+      - deployment: TerraformApply
+        displayName: Terraform Apply
+        environment: azure-kubernetes-production
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+
+                - task: TerraformInstaller@1
+                  displayName: Install Terraform
+                  inputs:
+                    terraformVersion: $(TF_VERSION)
+
+                - task: DownloadPipelineArtifact@2
+                  displayName: Download Terraform Plan
+                  inputs:
+                    artifact: terraform-plan
+                    path: '$(Pipeline.Workspace)/terraform-plan'
+
+                - task: AzureCLI@2
+                  displayName: Deploy Infrastructure
+                  inputs:
+                    azureSubscription: $(AZURE_SERVICE_CONNECTION)
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    addSpnToEnvironment: true
+                    inlineScript: |
+                      set -euo pipefail
+                      cd "$(TF_WORKING_DIR)"
+
+                      export ARM_USE_OIDC=true
+                      export ARM_CLIENT_ID="$servicePrincipalId"
+                      export ARM_OIDC_TOKEN="$idToken"
+                      export ARM_TENANT_ID="$tenantId"
+                      export ARM_SUBSCRIPTION_ID="$(AZURE_SUBSCRIPTION_ID)"
+                      export TF_VAR_subscription_id="$(AZURE_SUBSCRIPTION_ID)"
+
+                      terraform init \
+                        -input=false \
+                        -reconfigure \
+                        -backend-config="resource_group_name=$(TFSTATE_RESOURCE_GROUP)" \
+                        -backend-config="storage_account_name=$(TFSTATE_STORAGE_ACCOUNT)" \
+                        -backend-config="container_name=$(TFSTATE_CONTAINER)" \
+                        -backend-config="key=$(TF_STATE_KEY)" \
+                        -backend-config="use_oidc=true" \
+                        -backend-config="use_azuread_auth=true"
+
+                      terraform apply \
+                        -input=false \
+                        "$(Pipeline.Workspace)/terraform-plan/tfplan"
+
+                      terraform output
+                  env:
+                    TF_VAR_ssh_public_key: $(TF_VAR_ssh_public_key)
