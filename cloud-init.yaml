@@ -1,0 +1,96 @@
+#cloud-config
+
+hostname: ${hostname}
+manage_etc_hosts: true
+
+package_update: true
+
+packages:
+  - apt-transport-https
+  - ca-certificates
+  - curl
+  - gpg
+  - software-properties-common
+
+runcmd:
+
+  # Disable swap
+  - swapoff -a
+  - sed -i '/swap/d' /etc/fstab
+
+  # Kubernetes kernel modules
+  - |
+    cat > /etc/modules-load.d/kubernetes.conf <<EOF
+    overlay
+    br_netfilter
+    EOF
+
+  - modprobe overlay
+  - modprobe br_netfilter
+
+  # Kubernetes networking
+  - |
+    cat > /etc/sysctl.d/kubernetes.conf <<EOF
+    net.bridge.bridge-nf-call-ip6tables = 1
+    net.bridge.bridge-nf-call-iptables = 1
+    net.ipv4.ip_forward = 1
+    EOF
+
+  - sysctl --system
+
+  # Create apt keyring directory
+  - mkdir -p /etc/apt/keyrings
+
+  # Kubernetes repository
+  - |
+    curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.34/deb/Release.key |
+    gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+
+  - |
+    echo "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.34/deb/ /" |
+    tee /etc/apt/sources.list.d/kubernetes.list
+
+  # CRI-O repository
+  - |
+    curl -fsSL https://pkgs.k8s.io/addons:/cri-o:/stable:/v1.34/deb/Release.key |
+    gpg --dearmor -o /etc/apt/keyrings/cri-o-apt-keyring.gpg
+
+  - |
+    echo "deb [signed-by=/etc/apt/keyrings/cri-o-apt-keyring.gpg] https://pkgs.k8s.io/addons:/cri-o:/stable:/v1.34/deb/ /" |
+    tee /etc/apt/sources.list.d/cri-o.list
+
+  # Install CRI-O and Kubernetes
+  - apt-get update
+  - apt-get install -y cri-o kubelet kubeadm kubectl cri-tools
+
+  # Hold Kubernetes packages
+  - apt-mark hold kubelet kubeadm kubectl
+
+  # CRI-O cgroup configuration
+  - mkdir -p /etc/crio/crio.conf.d
+
+  - |
+    cat > /etc/crio/crio.conf.d/02-cgroup-manager.conf <<EOF
+    [crio.runtime]
+    cgroup_manager = "systemd"
+    EOF
+
+  # CRI configuration
+  - |
+    cat > /etc/crictl.yaml <<EOF
+    runtime-endpoint: unix:///var/run/crio/crio.sock
+    image-endpoint: unix:///var/run/crio/crio.sock
+    timeout: 10
+    debug: false
+    EOF
+
+  # Enable CRI-O
+  - systemctl enable crio
+  - systemctl restart crio
+
+  # Enable kubelet
+  - systemctl enable kubelet
+
+  # Record node role
+  - |
+    echo "Kubernetes Node Role: ${role}" > /etc/kubernetes-node-role

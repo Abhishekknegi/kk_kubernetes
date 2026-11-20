@@ -1,0 +1,43 @@
+# Terraform local working directory and state
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+
+# Variable files that may contain secrets, subscription IDs, or keys
+*.tfvars
+*.tfvars.json
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# SSH private keys and local key artifacts
+id_rsa
+id_ed25519
+azure_k8s_rsa
+azure_k8s_ed25519
+*.pem
+*.key
+*.ppk
+
+# Kubernetes kubeconfig and local cluster credentials
+kubeconfig
+*.kubeconfig
+
+# OS and editor artifacts
+.DS_Store
+Thumbs.db
+.vscode/
+<<<<<<< HEAD
+.idea/
+=======
+.idea/
+>>>>>>> 4e3de4ae92aa70a91e5fccad29d78886a1acc3bb
+
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
