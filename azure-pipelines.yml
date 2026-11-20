@@ -14,7 +14,7 @@ pool:
 variables:
   - group: kk-kubernetes-terraform
   - name: TF_VERSION
-    value: '1.7.5'
+    value: '1.17.2'
   - name: TF_WORKING_DIR
     value: '$(Build.SourcesDirectory)'
   - name: TF_STATE_KEY
