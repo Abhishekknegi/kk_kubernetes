@@ -10,7 +10,7 @@ output "cluster_nodes" {
   value = {
     for node, vm in azurerm_linux_virtual_machine.k8s :
     node => {
-      hostname  = vm.name
+      hostname   = vm.name
       private_ip = azurerm_network_interface.k8s[node].private_ip_address
       public_ip  = azurerm_public_ip.k8s[node].ip_address
       role       = var.nodes[node].role
