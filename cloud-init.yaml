@@ -51,12 +51,12 @@ runcmd:
     tee /etc/apt/sources.list.d/kubernetes.list
 
   # CRI-O repository
+  # CRI-O repository (openSUSE OBS)
   - |
-    curl -fsSL https://pkgs.k8s.io/addons:/cri-o:/stable:/v1.34/deb/Release.key |
-    gpg --dearmor -o /etc/apt/keyrings/cri-o-apt-keyring.gpg
-
+    curl -fsSL https://download.opensuse.org/repositories/isv:/cri-o:/stable:/v1.34/deb/Release.key | \
+    gpg --batch --yes --dearmor -o /etc/apt/keyrings/cri-o-apt-keyring.gpg
   - |
-    echo "deb [signed-by=/etc/apt/keyrings/cri-o-apt-keyring.gpg] https://pkgs.k8s.io/addons:/cri-o:/stable:/v1.34/deb/ /" |
+    echo "deb [signed-by=/etc/apt/keyrings/cri-o-apt-keyring.gpg] https://download.opensuse.org/repositories/isv:/cri-o:/stable:/v1.34/deb/ /" | \
     tee /etc/apt/sources.list.d/cri-o.list
 
   # Install CRI-O and Kubernetes
