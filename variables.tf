@@ -13,7 +13,7 @@ variable "location" {
 variable "resource_group_name" {
   description = "Existing or target Azure Resource Group"
   type        = string
-  default     = "kml_rg_main-65264849a6da431f"
+  default     = "kml_rg_main-eabb00d7d79f44c9"
 }
 
 variable "vm_size" {
