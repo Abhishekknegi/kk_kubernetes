@@ -4,7 +4,7 @@ Steps to Initialize k8s-cp01, Generate Join Command, and Join Workers
 Commands to Run
 1. On k8s-cp01 (10.10.1.4): Initialize control plane (if needed) & configure kubectl
 sudo kubeadm init \
-  --apiserver-advertise-address=10.10.1.4 \
+  --apiserver-advertise-address=10.10.1.6 \
   --pod-network-cidr=192.168.0.0/16
 
 mkdir -p "$HOME/.kube"
