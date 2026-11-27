@@ -1,9 +1,11 @@
+
 #cloud-config
 
 hostname: ${hostname}
 manage_etc_hosts: true
 
 package_update: true
+package_upgrade: false
 
 packages:
   - apt-transport-https
@@ -12,85 +14,154 @@ packages:
   - gpg
   - software-properties-common
 
-runcmd:
+write_files:
 
-  # Disable swap
-  - swapoff -a
-  - sed -i '/swap/d' /etc/fstab
+  # Kubernetes node installation script
+  - path: /usr/local/sbin/k8s-node-setup.sh
+    owner: root:root
+    permissions: '0750'
+    content: |
+      #!/usr/bin/env bash
+      set -Eeuo pipefail
 
-  # Kubernetes kernel modules
-  - |
-    cat > /etc/modules-load.d/kubernetes.conf <<EOF
-    overlay
-    br_netfilter
-    EOF
+      exec > >(tee -a /var/log/k8s-node-setup.log) 2>&1
 
-  - modprobe overlay
-  - modprobe br_netfilter
+      trap 'rc=$?; echo "ERROR: Setup failed at line $LINENO (exit $rc)"; exit "$rc"' ERR
 
-  # Kubernetes networking
-  - |
-    cat > /etc/sysctl.d/kubernetes.conf <<EOF
-    net.bridge.bridge-nf-call-ip6tables = 1
-    net.bridge.bridge-nf-call-iptables = 1
-    net.ipv4.ip_forward = 1
-    EOF
+      K8S_MINOR="v1.34"
+      CRIO_MINOR="v1.34"
 
-  - sysctl --system
+      echo "========================================"
+      echo "Starting Kubernetes node setup"
+      date
 
-  # Create apt keyring directory
-  - mkdir -p /etc/apt/keyrings
+      # 1. Disable swap
+      swapoff -a
+      sed -ri '/[[:space:]]swap[[:space:]]/s/^/#/' /etc/fstab
 
-  # Kubernetes repository
-  - |
-    curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.34/deb/Release.key |
-    gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+      # 2. Install prerequisites
+      apt-get update
+      apt-get install -y \
+        curl \
+        gpg \
+        ca-certificates \
+        apt-transport-https
 
-  - |
-    echo "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.34/deb/ /" |
-    tee /etc/apt/sources.list.d/kubernetes.list
+      # 3. Load kernel modules
+      cat > /etc/modules-load.d/kubernetes.conf <<EOF
+      overlay
+      br_netfilter
+      EOF
 
-  # CRI-O repository
-  # CRI-O repository (openSUSE OBS)
-  - |
-    curl -fsSL https://download.opensuse.org/repositories/isv:/cri-o:/stable:/v1.34/deb/Release.key | \
-    gpg --batch --yes --dearmor -o /etc/apt/keyrings/cri-o-apt-keyring.gpg
-  - |
-    echo "deb [signed-by=/etc/apt/keyrings/cri-o-apt-keyring.gpg] https://download.opensuse.org/repositories/isv:/cri-o:/stable:/v1.34/deb/ /" | \
-    tee /etc/apt/sources.list.d/cri-o.list
+      modprobe overlay
+      modprobe br_netfilter
 
-  # Install CRI-O and Kubernetes
-  - apt-get update
-  - apt-get install -y cri-o kubelet kubeadm kubectl cri-tools
+      # 4. Configure Kubernetes networking
+      cat > /etc/sysctl.d/99-kubernetes-cri.conf <<EOF
+      net.bridge.bridge-nf-call-iptables = 1
+      net.bridge.bridge-nf-call-ip6tables = 1
+      net.ipv4.ip_forward = 1
+      EOF
 
-  # Hold Kubernetes packages
-  - apt-mark hold kubelet kubeadm kubectl
+      sysctl --system
 
-  # CRI-O cgroup configuration
-  - mkdir -p /etc/crio/crio.conf.d
+      # 5. Configure APT keyrings
+      install -m 0755 -d /etc/apt/keyrings
 
-  - |
-    cat > /etc/crio/crio.conf.d/02-cgroup-manager.conf <<EOF
-    [crio.runtime]
-    cgroup_manager = "systemd"
-    EOF
+      curl -fsSL \
+        "https://pkgs.k8s.io/core:/stable:/$${K8S_MINOR}/deb/Release.key" \
+        | gpg --dearmor --yes \
+          -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
 
-  # CRI configuration
-  - |
-    cat > /etc/crictl.yaml <<EOF
-    runtime-endpoint: unix:///var/run/crio/crio.sock
-    image-endpoint: unix:///var/run/crio/crio.sock
-    timeout: 10
-    debug: false
-    EOF
+      chmod 644 /etc/apt/keyrings/kubernetes-apt-keyring.gpg
 
-  # Enable CRI-O
-  - systemctl enable crio
-  - systemctl restart crio
+      # 6. Configure Kubernetes repository
+      cat > /etc/apt/sources.list.d/kubernetes.list <<EOF
+      deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/$${K8S_MINOR}/deb/ /
+      EOF
 
-  # Enable kubelet
-  - systemctl enable kubelet
+      # 7. Configure CRI-O repository
+      curl -fsSL \
+        "https://download.opensuse.org/repositories/isv:/cri-o:/stable:/$${CRIO_MINOR}/deb/Release.key" \
+        | gpg --dearmor --yes \
+          -o /etc/apt/keyrings/cri-o-apt-keyring.gpg
+
+      chmod 644 /etc/apt/keyrings/cri-o-apt-keyring.gpg
+
+      cat > /etc/apt/sources.list.d/cri-o.list <<EOF
+      deb [signed-by=/etc/apt/keyrings/cri-o-apt-keyring.gpg] https://download.opensuse.org/repositories/isv:/cri-o:/stable:/$${CRIO_MINOR}/deb/ /
+      EOF
+
+      # 8. Update repositories
+      apt-get update
+
+      # 9. Install Kubernetes and CRI-O
+      apt-get install -y \
+        cri-o \
+        kubelet \
+        kubeadm \
+        kubectl \
+        cri-tools
+
+      # 10. Hold package versions
+      apt-mark hold cri-o kubelet kubeadm kubectl
+
+      # 11. Configure CRI-O systemd cgroups
+      mkdir -p /etc/crio/crio.conf.d
+
+      cat > /etc/crio/crio.conf.d/02-cgroup-manager.conf <<EOF
+      [crio.runtime]
+      cgroup_manager = "systemd"
+      EOF
+
+      # 12. Configure crictl
+      cat > /etc/crictl.yaml <<EOF
+      runtime-endpoint: unix:///var/run/crio/crio.sock
+      image-endpoint: unix:///var/run/crio/crio.sock
+      timeout: 10
+      debug: false
+      EOF
+
+      # 13. Enable services
+      systemctl daemon-reload
+      systemctl enable --now crio
+      systemctl enable kubelet
+
+      # 14. Verify installations
+      echo "========================================"
+      echo "Kubernetes component versions"
+      echo "========================================"
+
+      kubeadm version
+      kubelet --version
+      kubectl version --client
+      crio --version
+
+      echo "========================================"
+      echo "Kubernetes node setup completed"
+      echo "========================================"
+
+      date
 
   # Record node role
-  - |
-    echo "Kubernetes Node Role: ${role}" > /etc/kubernetes-node-role
+  - path: /etc/kubernetes-node-role
+    owner: root:root
+    permissions: '0644'
+    content: |
+      ${role}
+
+  # Record provisioning information
+  - path: /etc/kubernetes-node-info
+    owner: root:root
+    permissions: '0644'
+    content: |
+      hostname: ${hostname}
+      kubernetes_version: v1.34
+      container_runtime: CRI-O
+      runtime_version: v1.34
+
+runcmd:
+  - [ bash, -lc, "chmod 750 /usr/local/sbin/k8s-node-setup.sh" ]
+  - [ bash, -lc, "/usr/local/sbin/k8s-node-setup.sh" ]
+
+final_message: "Kubernetes node provisioning completed. Host: ${hostname}. Role: ${role}. Cloud-init finished after $UPTIME seconds."
