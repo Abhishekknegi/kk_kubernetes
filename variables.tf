@@ -31,6 +31,7 @@ variable "admin_username" {
 variable "ssh_public_key" {
   description = "SSH public key"
   type        = string
+  default     = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFkaqJQk9LhBUSnjc7xe7g+GAJJ0esCN3FSo0nRHxrlJ azureadmin"
 }
 
 variable "vnet_address_space" {
